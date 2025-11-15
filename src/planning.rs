@@ -154,7 +154,7 @@ mod tests {
         let local_content = "hallois";
         let local = PathBuf::new().join("README.md");
         let plan = SyncPlan::Replace {
-            local: local,
+            local,
             remote: "remote".to_string(),
             remote_checksum: Some(remote_checksum),
         };
@@ -176,7 +176,7 @@ mod tests {
         let local_content = "hei";
         let local = PathBuf::new().join("README.md");
         let plan = SyncPlan::Replace {
-            local: local,
+            local,
             remote: "remote".to_string(),
             remote_checksum: Some(remote_checksum),
         };
@@ -273,7 +273,7 @@ mod tests {
         let local_content = "content";
         let local = PathBuf::new().join("README.md");
         let plan = SyncPlan::Replace {
-            local: local,
+            local,
             remote: "remote".to_string(),
             remote_checksum: None,
         };

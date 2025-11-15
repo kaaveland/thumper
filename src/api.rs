@@ -1,9 +1,9 @@
-use std::thread;
 use anyhow::anyhow;
 use crossbeam::channel::unbounded;
 use fxhash::FxHashMap;
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use std::thread;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]

@@ -96,17 +96,15 @@ pub struct SyncArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use clap::CommandFactory;
     use crate::cli::Cli;
+    use clap::CommandFactory;
+    use std::fs;
 
     #[test]
     fn render_help() {
         let mut cli = Cli::command();
         let help = cli.render_help().to_string();
-        fs::write(
-            "docs/src/help", help
-        ).unwrap();
+        fs::write("docs/src/help", help).unwrap();
     }
 
     #[test]
@@ -114,11 +112,11 @@ mod tests {
         let mut cli = Cli::command();
         for subcommand in cli.get_subcommands_mut() {
             if subcommand.get_name() == "sync" {
-                let help = subcommand.render_help().to_string()
+                let help = subcommand
+                    .render_help()
+                    .to_string()
                     .replacen("sync", "thumper sync", 1);
-                fs::write(
-                    "docs/src/synchelp", help
-                ).unwrap();
+                fs::write("docs/src/synchelp", help).unwrap();
             }
         }
     }
