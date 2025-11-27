@@ -45,6 +45,17 @@ fn discover_files(root: &str) -> anyhow::Result<FxHashSet<PathBuf>> {
     }
 }
 
+pub fn normalize_path(path: &str) -> String {
+    if path.ends_with("/") {
+        path.to_owned()
+    } else {
+        let mut path = path.to_owned();
+        path.push('/');
+        path
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

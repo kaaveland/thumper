@@ -1,8 +1,7 @@
 use crate::api::FileMeta;
+use crate::sync::task::Task;
 use fxhash::{FxHashMap, FxHashSet};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use std::{fs, io};
 
 fn must_remove<'a>(
     local_files: &'a FxHashMap<String, PathBuf>,
@@ -17,39 +16,9 @@ fn must_remove<'a>(
         .collect()
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum SyncPlan {
-    Put {
-        local: PathBuf,
-        remote: String,
-    },
-    Replace {
-        local: PathBuf,
-        remote: String,
-        remote_checksum: Option<[u8; 32]>,
-    },
-    Delete {
-        remote: String,
-    },
-}
-
-#[cfg(test)]
-impl SyncPlan {
-    fn remote(&self) -> &str {
-        match self {
-            SyncPlan::Put { local: _, remote } => remote.as_str(),
-            SyncPlan::Replace {
-                local: _,
-                remote,
-                remote_checksum: _,
-            } => remote.as_str(),
-            SyncPlan::Delete { remote } => remote.as_str(),
-        }
-    }
-}
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum SyncAction {
+pub enum Action {
     Put {
         content: Vec<u8>,
         mime_type: Option<&'static str>,
@@ -60,30 +29,30 @@ pub enum SyncAction {
 
 pub struct Execution<'a> {
     pub remote: &'a str,
-    pub action: SyncAction,
+    pub action: Action,
 }
 
 pub fn plan_sync<'a>(
     local: &'a FxHashMap<String, PathBuf>,
     remote_content: &'a FxHashMap<String, FileMeta>,
     ignore: &[String],
-) -> Vec<SyncPlan> {
+) -> Vec<Task> {
     let mut job = Vec::with_capacity(local.len());
     let mut local_paths_ordered: Vec<_> = local.keys().map(|path| path.as_str()).collect();
     local_paths_ordered
         .sort_by_key(|path| (path.ends_with(".html") || path.ends_with(".htm"), *path));
 
     for remote_path in local_paths_ordered {
-        // safe; this is the key of local
+        // Safe; this is the key of local.
         let physical_path = local.get(remote_path).unwrap();
         if let Some(on_remote) = remote_content.get(remote_path) {
-            job.push(SyncPlan::Replace {
+            job.push(Task::Replace {
                 local: physical_path.to_owned(),
                 remote: remote_path.to_owned(),
                 remote_checksum: on_remote.checksum,
             });
         } else {
-            job.push(SyncPlan::Put {
+            job.push(Task::Put {
                 local: physical_path.to_owned(),
                 remote: remote_path.to_owned(),
             });
@@ -92,56 +61,16 @@ pub fn plan_sync<'a>(
     job.extend(
         must_remove(local, remote_content, ignore)
             .into_iter()
-            .map(|remote| SyncPlan::Delete {
+            .map(|remote| Task::Delete {
                 remote: remote.to_owned(),
             }),
     );
     job
 }
 
-pub fn plan_execution<'a, F>(plan: &'a SyncPlan, read: F) -> anyhow::Result<Execution<'a>>
-where
-    F: Fn(&'a PathBuf) -> io::Result<Vec<u8>>,
-{
-    match plan {
-        SyncPlan::Put { local, remote } => {
-            let content = fs::read(local)?;
-            let mime_type = infer::get_from_path(local)?.map(|t| t.mime_type());
-            Ok(Execution {
-                remote,
-                action: SyncAction::Put { content, mime_type },
-            })
-        }
-        SyncPlan::Replace {
-            local,
-            remote,
-            remote_checksum,
-        } => {
-            let content = read(local)?;
-            let mime_type = infer::get_from_path(local)?.map(|t| t.mime_type());
-            let digest: [u8; 32] = Sha256::digest(&content).into();
-            if &Some(digest) != remote_checksum {
-                Ok(Execution {
-                    remote,
-                    action: SyncAction::Put { content, mime_type },
-                })
-            } else {
-                Ok(Execution {
-                    remote,
-                    action: SyncAction::Ignore,
-                })
-            }
-        }
-        SyncPlan::Delete { remote } => Ok(Execution {
-            remote,
-            action: SyncAction::Delete,
-        }),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Execution, SyncAction, SyncPlan, plan_execution, plan_sync};
+    use super::{Execution, Action, Task, plan_sync};
     use crate::api::FileMeta;
     use fxhash::FxHashMap;
     use sha2::{Digest, Sha256};
@@ -153,16 +82,16 @@ mod tests {
         let remote_checksum: [u8; 32] = Sha256::digest(content_remote.as_bytes()).into();
         let local_content = "hallois";
         let local = PathBuf::new().join("README.md");
-        let plan = SyncPlan::Replace {
+        let task = Task::Replace {
             local: local,
             remote: "remote".to_string(),
             remote_checksum: Some(remote_checksum),
         };
         let Execution { remote: _, action } =
-            plan_execution(&plan, |_| Ok(local_content.as_bytes().to_vec())).unwrap();
+            task.plan(|_| Ok(local_content.as_bytes().to_vec())).unwrap();
         assert_eq!(
             action,
-            SyncAction::Put {
+            Action::Put {
                 content: local_content.as_bytes().to_vec(),
                 mime_type: None
             }
@@ -175,14 +104,14 @@ mod tests {
         let remote_checksum: [u8; 32] = Sha256::digest(content_remote.as_bytes()).into();
         let local_content = "hei";
         let local = PathBuf::new().join("README.md");
-        let plan = SyncPlan::Replace {
+        let task = Task::Replace {
             local: local,
             remote: "remote".to_string(),
             remote_checksum: Some(remote_checksum),
         };
         let Execution { remote: _, action } =
-            plan_execution(&plan, |_| Ok(local_content.as_bytes().to_vec())).unwrap();
-        assert_eq!(action, SyncAction::Ignore);
+            task.plan(|_| Ok(local_content.as_bytes().to_vec())).unwrap();
+        assert_eq!(action, Action::Ignore);
     }
 
     #[test]
@@ -193,7 +122,7 @@ mod tests {
         let job = plan_sync(&local, &remote, &[]);
         assert_eq!(
             job,
-            vec![SyncPlan::Delete {
+            vec![Task::Delete {
                 remote: "subfolder/index.html".to_string()
             }]
         );
@@ -211,7 +140,7 @@ mod tests {
         let job = plan_sync(&local, &remote, &["other_subfolder".into()]);
         assert_eq!(
             job,
-            vec![SyncPlan::Delete {
+            vec![Task::Delete {
                 remote: "subfolder/index.html".to_string()
             }]
         );
@@ -225,7 +154,7 @@ mod tests {
         let job = plan_sync(&local, &remote, &[]);
         assert_eq!(
             job,
-            vec![SyncPlan::Put {
+            vec![Task::Put {
                 remote: "subfolder/index.html".to_string(),
                 local: PathBuf::new()
             }]
@@ -241,7 +170,7 @@ mod tests {
         let job = plan_sync(&local, &remote, &[]);
         assert_eq!(
             job,
-            vec![SyncPlan::Replace {
+            vec![Task::Replace {
                 remote: "subfolder/index.html".to_string(),
                 local: PathBuf::new(),
                 remote_checksum: None
@@ -258,29 +187,29 @@ mod tests {
         local.insert("c.jpg".into(), PathBuf::new());
 
         let remote = FxHashMap::default();
-        let job = plan_sync(&local, &remote, &[]);
+        let tasks = plan_sync(&local, &remote, &[]);
 
         // HTML files should be at the end
-        assert_eq!(job[0].remote(), "c.jpg");
-        assert_eq!(job[1].remote(), "z.txt");
+        assert_eq!(tasks[0].remote(), "c.jpg");
+        assert_eq!(tasks[1].remote(), "z.txt");
         // Then HTML files
-        assert!(job[2].remote() == "a.html" || job[2].remote() == "b.htm");
-        assert!(job[3].remote() == "a.html" || job[3].remote() == "b.htm");
+        assert!(tasks[2].remote() == "a.html" || tasks[2].remote() == "b.htm");
+        assert!(tasks[3].remote() == "a.html" || tasks[3].remote() == "b.htm");
     }
 
     #[test]
     fn replaces_when_remote_checksum_is_none() {
         let local_content = "content";
         let local = PathBuf::new().join("README.md");
-        let plan = SyncPlan::Replace {
+        let task = Task::Replace {
             local: local,
             remote: "remote".to_string(),
             remote_checksum: None,
         };
-        let execution = plan_execution(&plan, |_| Ok(local_content.as_bytes().to_vec())).unwrap();
+        let execution = task.plan(|_| Ok(local_content.as_bytes().to_vec())).unwrap();
         assert_eq!(
             execution.action,
-            SyncAction::Put {
+            Action::Put {
                 content: local_content.as_bytes().to_vec(),
                 mime_type: None
             }

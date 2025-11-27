@@ -22,27 +22,31 @@ pub struct FileMeta {
 #[derive(Clone)]
 pub struct StorageZoneClient {
     client: Client,
-    access_key: String,
+    api_key: String,
     endpoint: String,
     storage_zone: String,
 }
 
 impl StorageZoneClient {
-    pub fn new(access_key: String, endpoint: String, storage_zone: String) -> Self {
+    pub fn new(api_key: &str, endpoint: &str, storage_zone: &str) -> Self {
         StorageZoneClient {
             client: Client::new(),
-            access_key,
-            endpoint,
-            storage_zone,
+            api_key: api_key.to_owned(),
+            endpoint: endpoint.to_owned(),
+            storage_zone: storage_zone.to_owned(),
         }
     }
 
     pub fn read_file(&self, path: &str) -> anyhow::Result<String> {
-        let response = self
+        let request =  self
             .client
             .get(self.url_for(path))
-            .header("AccessKey", self.access_key.as_str())
-            .send()?;
+            .header("AccessKey", &self.api_key);
+
+        println!("Request: {:?}", request);
+
+        let response = request.send()?;
+
         if response.status().is_success() {
             Ok(response.text()?)
         } else {
@@ -55,11 +59,14 @@ impl StorageZoneClient {
     }
 
     fn ls_dir(&self, path: &str) -> anyhow::Result<Vec<FileInfo>> {
-        let response = self
+        let request = self
             .client
             .get(self.url_for(path))
-            .header("AccessKey", self.access_key.as_str())
-            .send()?;
+            .header("AccessKey", &self.api_key);
+
+        println!("Request: {:?}", request);
+
+        let response = request.send()?;
         Ok(response.json()?)
     }
 
@@ -84,7 +91,7 @@ impl StorageZoneClient {
                 let send_result = post_result.clone();
                 workers.push(scope.spawn(move || {
                     while let Ok(path) = receive_work.recv() {
-                        send_result.send(self.ls_dir(path.as_str()))?;
+                        send_result.send(self.ls_dir(&path))?;
                     }
                     // Channel closed
                     Ok::<(), anyhow::Error>(())
@@ -103,9 +110,9 @@ impl StorageZoneClient {
                             "{}/{}/",
                             child
                                 .path
-                                .trim_start_matches(global_prefix.as_str())
+                                .trim_start_matches(&global_prefix)
                                 .trim_end_matches('/'),
-                            child.object_name.as_str()
+                            &child.object_name
                         );
                         if skip.iter().any(|skip| subtree.starts_with(skip)) {
                             continue;
@@ -144,7 +151,7 @@ impl StorageZoneClient {
             files_by_name.insert(
                 format!(
                     "{}{}",
-                    fi.path.trim_start_matches(trim_prefix.as_str()),
+                    fi.path.trim_start_matches(&trim_prefix),
                     fi.object_name
                 ),
                 FileMeta { checksum },
@@ -161,17 +168,19 @@ impl StorageZoneClient {
     ) -> anyhow::Result<()> {
         let url = self.url_for(path);
 
-        let response = self
+        let request = self
             .client
             .put(url)
-            .header("AccessKey", self.access_key.as_str())
+            .header("AccessKey", &self.api_key)
             .header(
                 "Content-Type",
                 content_type.unwrap_or("application/octet-stream"),
             )
-            .body(body)
-            .send()?;
+            .body(body);
 
+        println!("Request: {:?}", request);
+
+        let response = request.send()?;
         if response.status().is_success() {
             Ok(())
         } else {
@@ -180,11 +189,15 @@ impl StorageZoneClient {
     }
 
     pub fn delete_file(&self, path: &str) -> anyhow::Result<()> {
-        let response = self
+        let request = self
             .client
             .delete(self.url_for(path))
-            .header("AccessKey", self.access_key.as_str())
-            .send()?;
+            .header("AccessKey", &self.api_key);
+
+        println!("Request: {:?}", request);
+
+        let response = request.send()?;
+        
         Ok(response.error_for_status().map(|_| ())?)
     }
 }
